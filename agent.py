@@ -46,7 +46,7 @@ class Agent:
         history = history if history is not None else []
 
         while True:
-            response, _ = self.llm.get_response(
+            response, history_message = self.llm.get_response(
                 user_input=user_input,
                 history=history,
                 tools=self.tool_jsons,
@@ -58,7 +58,7 @@ class Agent:
 
             # 模型文本回复
             if "content" in message and message["content"]:
-                history.append({"role": "assistant", "content": message["content"]})
+                history_message.append({"role": "assistant", "content": message["content"]})
                 self._assistant_print(message["content"])
 
             # 处理工具调用
@@ -74,7 +74,7 @@ class Agent:
                     self._tool_print(f"Tool result: {tool_result}")
 
                     # 工具结果加入历史
-                    history.append({
+                    history_message.append({
                         "role": "tool",
                         "content": tool_result,
                         "tool_call_id": tool_call_id
@@ -83,10 +83,21 @@ class Agent:
                 user_input = None
             else:
                 # 没有工具调用，结束
-                return history
+                return history_message
     
 
 if __name__ == "__main__":
     # llm = LocalLLM()
     agent = Agent()
-    agent.loop("当前在什么目录下？现在时间几点了？")
+
+    agent.loop("当前路径下有多少文件？现在几点了？")
+
+    # history = []
+    # while True:
+    #     user_input = input(f"{YELLOW}User:{RESET} ")
+
+    #     if user_input.lower() in {"exit", "quit"}:
+    #         print("Exiting.")
+    #         break
+
+    #     history = agent.loop(user_input, history)
