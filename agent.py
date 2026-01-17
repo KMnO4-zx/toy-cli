@@ -14,8 +14,9 @@ RESET = "\033[0m"
 
 
 class Agent:
-    def __init__(self, llm: BaseLLM = None):
+    def __init__(self, llm: BaseLLM = None, use_todo: bool = False):
         self.llm = llm if llm else SiliconflowLLM()
+        self.use_todo = use_todo
         self.tool_jsons, self.tool_map = self._load_tools()
         self.SYSTEM_PROMPT = SYSTEM_PROMPT
         self._info_print()
@@ -23,8 +24,11 @@ class Agent:
 
     def _load_tools(self):
         tools = [
-            run_bash, run_read, run_write, run_edit, get_real_time, run_todo
+            run_bash, run_read, run_write, run_edit, get_real_time
         ]
+        if self.use_todo:
+            tools.append(run_todo)
+
         tool_jsons = [function_to_json(tool) for tool in tools]
 
         # run_todo 需要手动的详细 schema，因为 function_to_json 无法描述嵌套对象结构
@@ -64,8 +68,12 @@ class Agent:
                 },
             },
         }
-
-        tool_jsons.append(todo_schema)
+        if self.use_todo:
+            # 替换 function_to_json 生成的简单 schema 为详细的 schema
+            for i, tool_json in enumerate(tool_jsons):
+                if tool_json["function"]["name"] == "run_todo":
+                    tool_jsons[i] = todo_schema
+                    break
 
         tool_map = {tool.__name__: tool for tool in tools}
         return tool_jsons, tool_map
@@ -190,7 +198,7 @@ class Agent:
     
 
 if __name__ == "__main__":
-    llm = LocalLLM()
-    agent = Agent(llm=llm)
+    # llm = SiliconflowLLM(model="deepseek-ai/DeepSeek-V3.2")
+    agent = Agent(use_todo=True)
 
     agent.loop()
