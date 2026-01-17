@@ -9,6 +9,7 @@ import pprint
 BLUE = "\033[94m"
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
+GRAY = "\033[90m"
 RESET = "\033[0m"
 
 
@@ -16,6 +17,7 @@ class Agent:
     def __init__(self, llm: BaseLLM = None):
         self.llm = llm if llm else SiliconflowLLM()
         self.tool_jsons, self.tool_map = self._load_tools()
+        self.SYSTEM_PROMPT = SYSTEM_PROMPT
 
     def _load_tools(self):
         tools = [
@@ -40,30 +42,34 @@ class Agent:
         print(f"{BLUE}Assistant:{RESET} {content}")
 
     def _tool_print(self, content: str):
-        print(f"{GREEN}Tool:{RESET} {content}")
+        print(f"{GRAY}Tool: {content}{RESET}")
         
-    def loop(self, user_input: str, history: list = None) -> list:
+    def response_loop(self, user_input: str, history: list = None) -> list:
+        """
+        仅处理单轮响应，直到不存在工具调用
+        """
         history = history if history is not None else []
 
+        messages = history + [{"role": "user", "content": user_input}]
+
         while True:
-            response, history_message = self.llm.get_response(
-                user_input=user_input,
-                history=history,
+            response = self.llm.get_response(
+                messages=messages,
                 tools=self.tool_jsons,
                 temperature=1.0,
                 max_tokens=4000,
             )
 
-            message = response['choices'][0]['message']
+            response_message = response['choices'][0]['message']
 
             # 模型文本回复
-            if "content" in message and message["content"]:
-                history_message.append({"role": "assistant", "content": message["content"]})
-                self._assistant_print(message["content"])
+            if "content" in response_message and response_message["content"]:
+                messages.append({"role": "assistant", "content": response_message["content"]})
+                self._assistant_print(response_message["content"])
 
-            # 处理工具调用
-            if "tool_calls" in message:
-                for tool_call in message["tool_calls"]:
+            # 如果存在工具 处理工具调用
+            if "tool_calls" in response_message:
+                for tool_call in response_message["tool_calls"]:
                     tool_call_id = tool_call["id"]
                     function = tool_call["function"]
                     tool_name = function["name"]
@@ -74,7 +80,7 @@ class Agent:
                     self._tool_print(f"Tool result: {tool_result}")
 
                     # 工具结果加入历史
-                    history_message.append({
+                    messages.append({
                         "role": "tool",
                         "content": tool_result,
                         "tool_call_id": tool_call_id
@@ -82,22 +88,28 @@ class Agent:
                 # 下一次循环不需要新的 user_input，用历史继续
                 user_input = None
             else:
-                # 没有工具调用，结束
-                return history_message
+                return messages
+        
+    def loop(self):
+
+        history = [
+                {"role": "system", "content": self.SYSTEM_PROMPT}
+        ]
+
+        while True:
+            user_input = input(f"{YELLOW}User:{RESET} ")
+
+            if user_input.lower() in {"exit", "quit"}:
+                print("Exiting.")
+                break
+
+            history = self.response_loop(user_input, history)
+
+            
     
 
 if __name__ == "__main__":
     # llm = LocalLLM()
     agent = Agent()
 
-    agent.loop("当前路径下有多少文件？现在几点了？")
-
-    # history = []
-    # while True:
-    #     user_input = input(f"{YELLOW}User:{RESET} ")
-
-    #     if user_input.lower() in {"exit", "quit"}:
-    #         print("Exiting.")
-    #         break
-
-    #     history = agent.loop(user_input, history)
+    agent.loop()

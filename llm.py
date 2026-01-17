@@ -2,7 +2,6 @@ import requests
 import json
 import os, time
 import pprint
-from prompt import SYSTEM_PROMPT
 
 from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
@@ -14,14 +13,9 @@ class BaseLLM:
         self.base_url = "https://api.openai.com/v1"
         self.model = model
 
-    def get_response(self, user_input: str = None, history: list = None, tools: list = None, **kwargs) -> dict:
-        url = f"{self.base_url}/chat/completions"
+    def get_response(self, messages: list = None, tools: list = None, **kwargs) -> dict:
 
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        if history:
-            messages.extend(history)
-        if user_input:
-            messages.append({"role": "user", "content": user_input})
+        url = f"{self.base_url}/chat/completions"
 
         payload = {
             "model": self.model,
@@ -43,7 +37,7 @@ class BaseLLM:
             try:
                 response = requests.post(url, json=payload, headers=headers)
                 response.raise_for_status()
-                return response.json(), messages
+                return response.json()
             except requests.exceptions.RequestException as e:
                 if attempt < max_retries - 1:
                     if response:

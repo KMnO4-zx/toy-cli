@@ -11,6 +11,9 @@ Rules:
 - Never invent file paths. Use bash ls/find first if unsure.
 - Make minimal changes. Don't over-engineer.
 - After finishing, summarize what changed.
+
+Need:
+- Your response in Chinese.
 """
 
 
