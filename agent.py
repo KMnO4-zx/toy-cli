@@ -18,6 +18,7 @@ class Agent:
         self.llm = llm if llm else SiliconflowLLM()
         self.tool_jsons, self.tool_map = self._load_tools()
         self.SYSTEM_PROMPT = SYSTEM_PROMPT
+        self._info_print()
 
     def _load_tools(self):
         tools = [
@@ -43,6 +44,10 @@ class Agent:
 
     def _tool_print(self, content: str):
         print(f"{GRAY}Tool: {content}{RESET}")
+
+    def _info_print(self):
+        content = f'Using model: {self.llm.model} || Platform: {getattr(self.llm, "platform", "Unknown")}'
+        print(f"{GREEN}Info: {content} {RESET}")
         
     def response_loop(self, user_input: str, history: list = None) -> list:
         """
@@ -68,7 +73,7 @@ class Agent:
                 self._assistant_print(response_message["content"])
 
             # 如果存在工具 处理工具调用
-            if "tool_calls" in response_message:
+            if "tool_calls" in response_message and response_message["tool_calls"]:
                 for tool_call in response_message["tool_calls"]:
                     tool_call_id = tool_call["id"]
                     function = tool_call["function"]
@@ -109,7 +114,7 @@ class Agent:
     
 
 if __name__ == "__main__":
-    # llm = LocalLLM()
+    llm = LocalLLM()
     agent = Agent()
 
     agent.loop()

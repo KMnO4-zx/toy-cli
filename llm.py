@@ -68,6 +68,7 @@ class SiliconflowLLM(BaseLLM):
         self.api_key = api_key if api_key else os.getenv("Siliconflow_API_KEY")
         self.base_url = "https://api.siliconflow.cn/v1"
         self.model = model
+        self.platform = "siliconflow"
 
 class LocalLLM(BaseLLM):
     def __init__(self, api_key: str = None, model: str = "qwen/qwen3-4b-2507"):
@@ -75,3 +76,4 @@ class LocalLLM(BaseLLM):
         self.api_key = api_key if api_key else "xxxxxxx"
         self.base_url = "http://192.168.196.125:1234/v1"  
         self.model = model
+        self.platform = "LMStudio"
