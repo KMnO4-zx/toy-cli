@@ -1,4 +1,4 @@
-# Toy CLI - 一个轻量级的代码 Agent 实现
+# Toy CLI
 
 <div align='center'>
     <img src="./images/kimi.png" alt="alt text" width="70%">
