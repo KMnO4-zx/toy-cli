@@ -14,7 +14,7 @@ RESET = "\033[0m"
 
 
 class Agent:
-    def __init__(self, llm: BaseLLM = None, use_todo: bool = False):
+    def __init__(self, llm: BaseLLM = None, use_todo: bool = True):
         self.llm = llm if llm else SiliconflowLLM()
         self.use_todo = use_todo
         self.tool_jsons, self.tool_map = self._load_tools()
@@ -199,6 +199,7 @@ class Agent:
 
 if __name__ == "__main__":
     # llm = SiliconflowLLM(model="deepseek-ai/DeepSeek-V3.2")
-    agent = Agent(use_todo=True)
+    llm = LocalLLM(model="agentcpm-explore@q4_k_m")
+    agent = Agent(llm=llm, use_todo=True)
 
     agent.loop()

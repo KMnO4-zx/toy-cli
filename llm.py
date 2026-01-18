@@ -71,9 +71,9 @@ class SiliconflowLLM(BaseLLM):
         self.platform = "siliconflow"
 
 class LocalLLM(BaseLLM):
-    def __init__(self, api_key: str = None, model: str = "qwen3-30b-a3b-instruct-2507"):
+    def __init__(self, api_key: str = None, model: str = "agentcpm-explore@f16"):
         super().__init__(api_key, model)
         self.api_key = api_key if api_key else "xxxxxxx"
-        self.base_url = "http://192.168.1.5:3333/v1"  
+        self.base_url = "http://192.168.1.5:1234/v1"  
         self.model = model
         self.platform = "LMStudio"
