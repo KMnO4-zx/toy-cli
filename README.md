@@ -12,8 +12,15 @@
     <img src="./images/bad-case.png" alt="alt text" width="75%">
 </div>
 
-这是一个简化的 Claude Code 风格的代码 Agent，展示了工具调用和 Agent 循环的核心概念.
+AgentCPM 这个 4B 的模型让我非常的惊艳，在本地部署的情况下，也能实现使用ToDo Manage管理工具调用和多轮交互。即使是在Q4量化的情况下，也能有不错的效果，比起之前尝试的 Qwen3-32B-A3B 模型，效果好了太多。
 
+<div align='center'>
+    <img src="./images/agentcpm.png" alt="alt text" width="70%">
+    <p>AgentCPM ToDo Tools</p>
+</div>
+
+
+这是一个简化的 Claude Code 风格的代码 Agent，展示了工具调用和 Agent 循环的核心概念.
 
 ## 仓库结构
 
