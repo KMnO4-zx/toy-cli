@@ -105,7 +105,7 @@ class Agent:
             try:
                 arguments = json.loads(function['arguments'])
             except json.JSONDecodeError:
-                print(f"{RED} 模型调用参数解析失败:{function['arguments']} ")
+                print(f"{RED} 模型调用参数解析失败:{function['arguments']} {RESET} ")
                 arguments = {}
             
             self._tool_print(f"Calling tool: {tool_name}")
