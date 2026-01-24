@@ -11,12 +11,14 @@ GREEN = "\033[92m"
 YELLOW = "\033[93m"
 GRAY = "\033[90m"
 RESET = "\033[0m"
+RED = "\033[91m"
 
 
 class Agent:
-    def __init__(self, llm: BaseLLM = None, use_todo: bool = True):
+    def __init__(self, llm: BaseLLM = None, use_todo: bool = True, streaming: bool = True):
         self.llm = llm if llm else SiliconflowLLM()
         self.use_todo = use_todo
+        self.streaming = streaming
         self.tool_jsons, self.tool_map = self._load_tools()
         self.SYSTEM_PROMPT = SYSTEM_PROMPT
         self._info_print()
@@ -88,6 +90,49 @@ class Agent:
             return result
         except Exception as e:
             return f"Error executing {tool_name}: {str(e)}"
+    
+    def _process_tool_calls(self, tool_calls_data, used_todo_flag):
+        """
+        处理工具调用，返回更新后的消息和是否使用了todo
+        """
+        messages_additions = []
+        used_todo = used_todo_flag
+        
+        for tool_call in tool_calls_data:
+            tool_call_id = tool_call['id']
+            function = tool_call['function']
+            tool_name = function['name']
+            try:
+                arguments = json.loads(function['arguments'])
+            except json.JSONDecodeError:
+                print(f"{RED} 模型调用参数解析失败:{function['arguments']} ")
+                arguments = {}
+            
+            self._tool_print(f"Calling tool: {tool_name}")
+            tool_result = self._execute_tool(tool_name, arguments)
+            self._tool_print(f"Tool result: {tool_result}")
+
+            # 跟踪 todo 使用
+            if tool_name == "run_todo":
+                used_todo = True
+
+            # 工具结果加入历史
+            messages_additions.append({
+                "role": "tool",
+                "content": tool_result,
+                "tool_call_id": tool_call_id
+            })
+        
+        return messages_additions, used_todo
+    
+    def _update_rounds_counter(self, used_todo):
+        """
+        更新没有使用todo的轮数计数器
+        """
+        if used_todo:
+            self.rounds_without_todo = 0
+        else:
+            self.rounds_without_todo += 1
         
     def _assistant_print(self, content: str):
         print(f"{BLUE}Assistant:{RESET} {content}")
@@ -107,9 +152,18 @@ class Agent:
             tuple: (messages, used_todo) - 更新后的消息历史和是否使用了 todo
         """
         history = history if history is not None else []
-        used_todo_this_turn = False
 
         messages = history + [{"role": "user", "content": user_input}]
+        if self.streaming:
+            return self._response_loop_streaming(messages)
+        else:
+            return self._response_loop_non_streaming(messages)
+    
+    def _response_loop_non_streaming(self, messages: list) -> tuple:
+        """
+        非流式响应处理
+        """
+        used_todo_this_turn = False
 
         while True:
             response = self.llm.get_response(
@@ -128,35 +182,91 @@ class Agent:
 
             # 如果存在工具 处理工具调用
             if "tool_calls" in response_message and response_message["tool_calls"]:
-                for tool_call in response_message["tool_calls"]:
-                    tool_call_id = tool_call["id"]
-                    function = tool_call["function"]
-                    tool_name = function["name"]
-                    arguments = json.loads(function["arguments"])
-
-                    self._tool_print(f"Calling tool: {tool_name}")
-                    tool_result = self._execute_tool(tool_name, arguments)
-                    self._tool_print(f"Tool result: {tool_result}")
-
-                    # 跟踪 todo 使用
-                    if tool_name == "run_todo":
-                        used_todo_this_turn = True
-
-                    # 工具结果加入历史
-                    messages.append({
-                        "role": "tool",
-                        "content": tool_result,
-                        "tool_call_id": tool_call_id
-                    })
-                # 下一次循环不需要新的 user_input，用历史继续
-                user_input = None
+                # 使用辅助方法处理工具调用
+                tool_messages, used_todo_this_turn = self._process_tool_calls(
+                    response_message["tool_calls"], 
+                    used_todo_this_turn
+                )
+                messages.extend(tool_messages)
             else:
                 # 更新计数器
-                if used_todo_this_turn:
-                    self.rounds_without_todo = 0
-                else:
-                    self.rounds_without_todo += 1
+                self._update_rounds_counter(used_todo_this_turn)
+                return messages, used_todo_this_turn
+    
+    def _response_loop_streaming(self, messages: list) -> tuple:
+        """
+        流式响应处理
+        """
+        used_todo_this_turn = False
 
+        while True:
+            # 收集完整的响应内容
+            full_content = ""
+            tool_calls = []
+            
+            # 开始流式响应
+            print(f"{BLUE}Assistant:{RESET} ", end="", flush=True)
+            
+            for chunk in self.llm.get_streaming_response(
+                messages = messages,
+                tools = self.tool_jsons,
+                temperature = 1.0,
+                max_tokens = 4000,
+            ):
+                if 'choices' not in chunk or not chunk['choices']:
+                    continue
+                    
+                delta = chunk['choices'][0].get('delta', {})
+                
+                # 处理文本内容
+                if 'content' in delta and delta['content']:
+                    content = delta['content']
+                    full_content += content
+                    # 流式输出内容
+                    print(content, end="", flush=True)
+                
+                # 处理工具调用
+                if 'tool_calls' in delta and delta['tool_calls']:
+                    for tool_call_delta in delta['tool_calls']:
+                        index = tool_call_delta.get('index', 0)
+                        
+                        # 如果是新的工具调用
+                        if index >= len(tool_calls):
+                            tool_calls.append({
+                                'id': tool_call_delta.get('id', ''),
+                                'type': 'function',
+                                'function': {
+                                    'name': '',
+                                    'arguments': ''
+                                }
+                            })
+                        
+                        # 更新工具调用信息
+                        if 'function' in tool_call_delta:
+                            func_delta = tool_call_delta['function']
+                            if 'name' in func_delta:
+                                tool_calls[index]['function']['name'] += func_delta['name']
+                            if 'arguments' in func_delta:
+                                tool_calls[index]['function']['arguments'] += func_delta['arguments']
+            
+            # 流式输出结束，换行
+            print()
+            
+            # 如果有内容，添加到消息历史
+            if full_content:
+                messages.append({"role": "assistant", "content": full_content})
+            
+            # 如果存在工具调用，处理它们
+            if tool_calls:
+                # 使用辅助方法处理工具调用
+                tool_messages, used_todo_this_turn = self._process_tool_calls(
+                    tool_calls, 
+                    used_todo_this_turn
+                )
+                messages.extend(tool_messages)
+            else:
+                # 更新计数器
+                self._update_rounds_counter(used_todo_this_turn)
                 return messages, used_todo_this_turn
         
     def loop(self):
@@ -184,13 +294,9 @@ class Agent:
                 # 如果模型长时间没有使用 todo，发出提醒
                 content.append({"type": "text", "text": "<reminder>已经 10+ 轮没有更新 todo 了，请更新任务列表。</reminder>"})
 
-            content.append({"type": "text", "text": user_input})
-
-            # 如果有额外内容（提醒），使用 content 数组；否则使用纯文本
-            if len(content) > 1:
-                user_message = {"role": "user", "content": content}
-
-            history.append(user_message)
+            # 如果有额外提示消息，加入历史信息
+            if content:
+                history.append({"role": "user", "content": content})
 
             history, _ = self.response_loop(user_input, history)
 
