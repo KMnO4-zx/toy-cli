@@ -2,8 +2,7 @@ import json
 from utils import function_to_json
 from prompt import SYSTEM_PROMPT
 from tools import safe_path, run_bash, run_read, run_write, run_edit, get_real_time, run_todo, run_powershell
-from llm import BaseLLM, SiliconflowLLM, LocalLLM
-import pprint
+from llm import BaseLLM, DeepSeekLLM, SiliconflowLLM, LocalLLM
 
 # ANSI 颜色代码
 BLUE = "\033[94m"
@@ -23,6 +22,26 @@ class Agent:
         self.SYSTEM_PROMPT = SYSTEM_PROMPT
         self._info_print()
         self.rounds_without_todo = 0  # 跟踪多少轮没有使用 todo
+
+    def _is_reasoner(self) -> bool:
+        return "reasoner" in (self.llm.model or "").lower()
+
+    def _strip_reasoning_from_history(self, history: list) -> list:
+        """
+        DeepSeek reasoner: reasoning_content 只用于“工具调用链”内部；
+        一旦进入新的用户问题，要从历史里移除 reasoning_content，否则可能 400。
+        """
+        if not history:
+            return history
+        cleaned = []
+        for m in history:
+            if isinstance(m, dict) and "reasoning_content" in m:
+                mm = dict(m)
+                mm.pop("reasoning_content", None)
+                cleaned.append(mm)
+            else:
+                cleaned.append(m)
+        return cleaned
 
     def _load_tools(self):
         tools = [
@@ -87,25 +106,29 @@ class Agent:
         tool_func = self.tool_map[tool_name]
         try:
             result = tool_func(**arguments)
-            return result
+            # 保证工具返回永远是字符串
+            if isinstance(result, str):
+                return result
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             return f"Error executing {tool_name}: {str(e)}"
     
     def _process_tool_calls(self, tool_calls_data, used_todo_flag):
         """
-        处理工具调用，返回更新后的消息和是否使用了todo
+        处理工具调用，返回工具消息列表和是否使用了todo
         """
         messages_additions = []
         used_todo = used_todo_flag
         
         for tool_call in tool_calls_data:
-            tool_call_id = tool_call['id']
-            function = tool_call['function']
-            tool_name = function['name']
+            tool_call_id = tool_call.get('id', '')
+            function = tool_call.get('function', {})
+            tool_name = function.get('name', '')
+
             try:
-                arguments = json.loads(function['arguments'])
+                arguments = json.loads(function.get('arguments', '{}') or '{}')
             except json.JSONDecodeError:
-                print(f"{RED} 模型调用参数解析失败:{function['arguments']} {RESET} ")
+                print(f"{RED}模型调用参数解析失败: {function.get('arguments','')}{RESET}")
                 arguments = {}
             
             self._tool_print(f"Calling tool: {tool_name}")
@@ -135,7 +158,10 @@ class Agent:
             self.rounds_without_todo += 1
         
     def _assistant_print(self, content: str):
-        print(f"{BLUE}Assistant:{RESET} {content}")
+        if self.streaming:
+            print(content, end="", flush=True)
+        else:
+            print(f"{BLUE}Assistant:{RESET} {content}")
 
     def _tool_print(self, content: str):
         print(f"{GRAY}Tool: {content}{RESET}")
@@ -146,14 +172,17 @@ class Agent:
         
     def response_loop(self, user_input: str, history: list = None) -> tuple:
         """
-        仅处理单轮响应，直到不存在工具调用
-
-        返回:
-            tuple: (messages, used_todo) - 更新后的消息历史和是否使用了 todo
+        处理一轮对话，直到不存在工具调用
+        返回: (messages, used_todo)
         """
         history = history if history is not None else []
 
+        # ✅ 关键：新的 user 问题开始前，清掉 history 里的 reasoning_content（reasoner 要求）
+        if self._is_reasoner():
+            history = self._strip_reasoning_from_history(history)
+
         messages = history + [{"role": "user", "content": user_input}]
+
         if self.streaming:
             return self._response_loop_streaming(messages)
         else:
@@ -175,16 +204,27 @@ class Agent:
 
             response_message = response['choices'][0]['message']
 
-            # 模型文本回复
-            if "content" in response_message and response_message["content"]:
-                messages.append({"role": "assistant", "content": response_message["content"]})
-                self._assistant_print(response_message["content"])
+            tool_calls = response_message.get("tool_calls") or []
+            content = response_message.get("content") or ""
+            reasoning = response_message.get("reasoning_content") or ""
 
-            # 如果存在工具 处理工具调用
-            if "tool_calls" in response_message and response_message["tool_calls"]:
-                # 使用辅助方法处理工具调用
+            # ✅ 关键：无论 content 是否为空，只要有 tool_calls，也要 append assistant(tool_calls)
+            assistant_msg = {"role": "assistant", "content": content}
+            if reasoning:
+                assistant_msg["reasoning_content"] = reasoning  # ✅ 单独字段回传
+            if tool_calls:
+                assistant_msg["tool_calls"] = tool_calls
+            messages.append(assistant_msg)
+
+            if content:
+                self._assistant_print(content)
+            
+            if reasoning:
+                self._assistant_print(reasoning)
+
+            if tool_calls:
                 tool_messages, used_todo_this_turn = self._process_tool_calls(
-                    response_message["tool_calls"], 
+                    tool_calls,
                     used_todo_this_turn
                 )
                 messages.extend(tool_messages)
@@ -202,30 +242,36 @@ class Agent:
         while True:
             # 收集完整的响应内容
             full_content = ""
+            full_reasoning = ""  # ✅ 单独累积 reasoning_content
             tool_calls = []
             
             # 开始流式响应
             print(f"{BLUE}Assistant:{RESET} ", end="", flush=True)
             
             for chunk in self.llm.get_streaming_response(
-                messages = messages,
-                tools = self.tool_jsons,
-                temperature = 1.0,
-                max_tokens = 4000,
+                messages=messages,
+                tools=self.tool_jsons,
+                temperature=1.0,
+                max_tokens=4000,
             ):
                 if 'choices' not in chunk or not chunk['choices']:
                     continue
                     
                 delta = chunk['choices'][0].get('delta', {})
-                
-                # 处理文本内容
+
+                # ✅ 推理内容：只累积，不混进 content
+                if 'reasoning_content' in delta and delta['reasoning_content']:
+                    full_reasoning += delta['reasoning_content']
+                    # 如需调试输出可打开下一行（但不建议默认打印）
+                    self._assistant_print(f"{delta['reasoning_content']}")
+
+                # 文本内容
                 if 'content' in delta and delta['content']:
-                    content = delta['content']
-                    full_content += content
-                    # 流式输出内容
-                    print(content, end="", flush=True)
+                    content_piece = delta['content']
+                    full_content += content_piece
+                    self._assistant_print(content_piece)
                 
-                # 处理工具调用
+                # 工具调用
                 if 'tool_calls' in delta and delta['tool_calls']:
                     for tool_call_delta in delta['tool_calls']:
                         index = tool_call_delta.get('index', 0)
@@ -244,23 +290,31 @@ class Agent:
                         # 更新工具调用信息
                         if 'function' in tool_call_delta:
                             func_delta = tool_call_delta['function']
-                            if 'name' in func_delta:
-                                tool_calls[index]['function']['name'] += func_delta['name']
-                            if 'arguments' in func_delta:
+
+                            # ✅ name 不用 +=，避免拼坏
+                            if 'name' in func_delta and func_delta['name']:
+                                if not tool_calls[index]['function']['name']:
+                                    tool_calls[index]['function']['name'] = func_delta['name']
+
+                            # arguments 可能分片，继续 +=
+                            if 'arguments' in func_delta and func_delta['arguments']:
                                 tool_calls[index]['function']['arguments'] += func_delta['arguments']
             
             # 流式输出结束，换行
             print()
             
-            # 如果有内容，添加到消息历史
-            if full_content:
-                messages.append({"role": "assistant", "content": full_content})
-            
-            # 如果存在工具调用，处理它们
+            # ✅ 无论 full_content 是否为空，都 append assistant；tool_calls 存在则附加
+            assistant_msg = {"role": "assistant", "content": full_content or ""}
+            if full_reasoning:
+                assistant_msg["reasoning_content"] = full_reasoning  # ✅ 单独字段回传
+            if tool_calls:
+                assistant_msg["tool_calls"] = tool_calls
+            messages.append(assistant_msg)
+
             if tool_calls:
                 # 使用辅助方法处理工具调用
                 tool_messages, used_todo_this_turn = self._process_tool_calls(
-                    tool_calls, 
+                    tool_calls,
                     used_todo_this_turn
                 )
                 messages.extend(tool_messages)
@@ -270,10 +324,7 @@ class Agent:
                 return messages, used_todo_this_turn
         
     def loop(self):
-
-        history = [
-                {"role": "system", "content": self.SYSTEM_PROMPT}
-        ]
+        history = [{"role": "system", "content": self.SYSTEM_PROMPT}]
         first_message = True
 
         while True:
@@ -304,8 +355,13 @@ class Agent:
     
 
 if __name__ == "__main__":
+    # DeepSeek reasoner：
+    # llm = DeepSeekLLM(model="deepseek-reasoner")
+    # llm = DeepSeekLLM(model="deepseek-chat")
+    # 其他：
     # llm = SiliconflowLLM(model="deepseek-ai/DeepSeek-V3.2")
     llm = LocalLLM(model="agentcpm-explore@q4_k_m")
+
     agent = Agent(llm=llm, use_todo=True)
 
     agent.loop()

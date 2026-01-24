@@ -108,11 +108,20 @@ class SiliconflowLLM(BaseLLM):
         self.model = model
         self.platform = "siliconflow"
 
+
+class DeepSeekLLM(BaseLLM):
+    def __init__(self, api_key: str = None, model: str = "deepseek-chat"):
+        self.api_key = api_key if api_key else os.getenv("DeepSeek_API_KEY")
+        self.base_url = "https://api.deepseek.com"
+        self.model = model
+        self.platform = "DeepSeek"
+
+
 class LocalLLM(BaseLLM):
     def __init__(self, api_key: str = None, model: str = "agentcpm-explore@f16"):
         super().__init__(api_key, model)
         self.api_key = api_key if api_key else "xxxxxxx"
-        # self.base_url = "http://192.168.1.5:1234/v1"  
-        self.base_url = "http://127.0.0.1:1234/v1" 
+        # self.base_url = "http://192.168.1.5:1234/v1"
+        self.base_url = "http://127.0.0.1:1234/v1"
         self.model = model
         self.platform = "LMStudio"

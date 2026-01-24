@@ -1,8 +1,8 @@
-import os
 import subprocess
-import sys
 from pathlib import Path
 from datetime import datetime
+import base64
+import chardet
 
 WORKDIR = Path.cwd()
 
@@ -127,10 +127,16 @@ def run_powershell(command: str) -> str:
         # Use -NoProfile for faster startup and cleaner environment
         # Use -ExecutionPolicy Bypass to avoid policy restrictions
         # For complex commands with quotes, use -EncodedCommand to avoid quoting issues
-        import base64
+        # ✅ 关键：关闭 PowerShell 进度流，避免首次初始化模块时输出 CLIXML progress 到 stderr
+        # 也顺便加上 $ErrorActionPreference，让非致命错误更可控（可选）
+        wrapped_command = (
+        "$ProgressPreference='SilentlyContinue'; "
+        "$ErrorActionPreference='Continue'; " # 可选：你想更严格可改成 'Stop'
+        + command
+        )
         
         # Encode the command as UTF-16LE and then base64
-        encoded_bytes = command.encode('utf-16le')
+        encoded_bytes = wrapped_command.encode('utf-16le')
         encoded_command = base64.b64encode(encoded_bytes).decode('ascii')
         
         full_command = f'powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded_command}'
@@ -190,7 +196,7 @@ def run_read(path: str, limit: int = None, encoding: str = "utf-8") -> str:
     - 'gbk': Extended Chinese encoding
     - 'utf-16': Unicode UTF-16 (Windows Unicode)
     """
-    import chardet
+    
     
     try:
         fp = safe_path(path)
@@ -275,7 +281,6 @@ def run_edit(path: str, old_text: str, new_text: str, encoding: str = None) -> s
     - If encoding is None, tries to detect the file's current encoding
     - Falls back to UTF-8 if detection fails
     """
-    import chardet
     
     try:
         fp = safe_path(path)
