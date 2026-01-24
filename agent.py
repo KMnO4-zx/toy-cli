@@ -1,7 +1,7 @@
 import json
 from utils import function_to_json
 from prompt import SYSTEM_PROMPT
-from tools import safe_path, run_bash, run_read, run_write, run_edit, get_real_time, run_todo
+from tools import safe_path, run_bash, run_read, run_write, run_edit, get_real_time, run_todo, run_powershell
 from llm import BaseLLM, SiliconflowLLM, LocalLLM
 import pprint
 
@@ -26,7 +26,7 @@ class Agent:
 
     def _load_tools(self):
         tools = [
-            run_bash, run_read, run_write, run_edit, get_real_time
+            run_powershell, run_bash, run_read, run_write, run_edit, get_real_time
         ]
         if self.use_todo:
             tools.append(run_todo)
