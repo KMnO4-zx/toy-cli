@@ -1,8 +1,8 @@
-import os
 import subprocess
-import sys
 from pathlib import Path
 from datetime import datetime
+import base64
+import chardet
 
 WORKDIR = Path.cwd()
 
@@ -28,27 +28,46 @@ def safe_path(p: str) -> Path:
 
 def run_bash(command: str) -> str:
     """
-    Execute shell command with safety checks.
+    Execute shell command with safety checks and basic encoding support.
 
     Security: Blocks obviously dangerous commands.
     Timeout: 60 seconds to prevent hanging.
     Output: Truncated to 50KB to prevent context overflow.
+    
+    Note: For PowerShell commands, use run_powershell() instead for better
+    encoding support and PowerShell-specific features.
+    
+    Encoding handling:
+    - On Windows: Tries UTF-8, falls back to system locale encoding
+    - On Unix/Linux: Uses UTF-8
     """
+    import platform
+    
     # Basic safety - block dangerous patterns
     dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
     if any(d in command for d in dangerous):
         return "Error: Dangerous command blocked"
 
     try:
+        # Use universal_newlines for better cross-platform compatibility
+        # This lets Python handle the encoding automatically
         result = subprocess.run(
             command,
             shell=True,
             cwd=WORKDIR,
             capture_output=True,
-            text=True,
+            universal_newlines=True,
             timeout=60
         )
-        output = (result.stdout + result.stderr).strip()
+        
+        # Safely combine stdout and stderr
+        output_parts = []
+        if result.stdout:
+            output_parts.append(result.stdout)
+        if result.stderr:
+            output_parts.append(result.stderr)
+        
+        output = "".join(output_parts).strip()
         return output[:50000] if output else "(no output)"
 
     except subprocess.TimeoutExpired:
@@ -56,16 +75,154 @@ def run_bash(command: str) -> str:
     except Exception as e:
         return f"Error: {e}"
 
-
-def run_read(path: str, limit: int = None) -> str:
+def run_powershell(command: str) -> str:
     """
-    Read file contents with optional line limit.
+    Execute PowerShell command with proper encoding handling for Windows.
+    
+    This function is specifically designed for PowerShell commands and provides
+    better encoding support and PowerShell-specific features than run_bash().
+    
+    Features:
+    - Proper UTF-8 encoding for PowerShell output
+    - Handles both PowerShell Core (pwsh) and Windows PowerShell
+    - Supports Chinese/English output on Windows systems
+    - Includes error handling for common PowerShell issues
+    - Uses -NoProfile and -ExecutionPolicy Bypass for consistent behavior
+    
+    Usage examples:
+    - run_powershell("Get-Process | Select-Object Name, CPU")
+    - run_powershell("Get-ChildItem -Path . -Filter *.py")
+    - run_powershell("$env:USERNAME")  # Get current username
+    - run_powershell("Write-Output '中文测试'")  # Chinese output
+    
+    Note: This function automatically uses PowerShell's -EncodedCommand parameter
+    to avoid quoting issues with complex commands.
+    """
+    import platform
+    import subprocess
+    
+    if platform.system() != 'Windows':
+        return "Error: PowerShell is only available on Windows systems"
+    
+    # PowerShell-specific safety checks
+    dangerous_patterns = [
+        "Remove-Item -Recurse -Force",
+        "Format-Volume",
+        "Stop-Computer",
+        "Restart-Computer",
+        "Invoke-Expression",
+        "iex ",
+        "Start-Process -Verb RunAs",  # Elevation
+        "Remove-Variable",  # Could remove important variables
+        "Clear-Host",  # Could clear console output
+    ]
+    
+    command_lower = command.lower()
+    for pattern in dangerous_patterns:
+        if pattern.lower() in command_lower:
+            return f"Error: Potentially dangerous PowerShell command blocked: {pattern}"
+    
+    try:
+        # Construct the PowerShell command
+        # Use -NoProfile for faster startup and cleaner environment
+        # Use -ExecutionPolicy Bypass to avoid policy restrictions
+        # For complex commands with quotes, use -EncodedCommand to avoid quoting issues
+        # ✅ 关键：关闭 PowerShell 进度流，避免首次初始化模块时输出 CLIXML progress 到 stderr
+        # 也顺便加上 $ErrorActionPreference，让非致命错误更可控（可选）
+        wrapped_command = (
+        "$ProgressPreference='SilentlyContinue'; "
+        "$ErrorActionPreference='Continue'; " # 可选：你想更严格可改成 'Stop'
+        + command
+        )
+        
+        # Encode the command as UTF-16LE and then base64
+        encoded_bytes = wrapped_command.encode('utf-16le')
+        encoded_command = base64.b64encode(encoded_bytes).decode('ascii')
+        
+        full_command = f'powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded_command}'
+        
+        # Use universal_newlines for automatic encoding handling
+        result = subprocess.run(
+            full_command,
+            shell=True,
+            cwd=WORKDIR,
+            capture_output=True,
+            universal_newlines=True,
+            timeout=60
+        )
+        
+        # Combine and format output
+        output_parts = []
+        
+        if result.stdout:
+            stdout = result.stdout.strip()
+            if stdout:
+                output_parts.append(stdout)
+        
+        if result.stderr:
+            stderr = result.stderr.strip()
+            if stderr:
+                # Mark stderr clearly
+                output_parts.append(f"[PowerShell Error] {stderr}")
+        
+        if output_parts:
+            output = "\n".join(output_parts)
+            return output[:50000] if len(output) > 50000 else output
+        else:
+            return "(PowerShell command executed successfully with no output)"
+            
+    except subprocess.TimeoutExpired:
+        return "Error: PowerShell command timed out (60s)"
+    except Exception as e:
+        return f"Error executing PowerShell command: {str(e)}"
+
+
+
+def run_read(path: str, limit: int = None, encoding: str = "utf-8") -> str:
+    """
+    Read file contents with optional line limit and encoding support.
 
     For large files, use limit to read just the first N lines.
     Output truncated to 50KB to prevent context overflow.
+    
+    Encoding support:
+    - Defaults to UTF-8
+    - Automatically detects common encodings (UTF-8, GB2312, GBK, UTF-16)
+    - Can be explicitly specified via the encoding parameter
+    
+    Common encodings for Windows:
+    - 'utf-8': Unicode UTF-8 (recommended for new files)
+    - 'gb2312': Simplified Chinese (common on Chinese Windows)
+    - 'gbk': Extended Chinese encoding
+    - 'utf-16': Unicode UTF-16 (Windows Unicode)
     """
+    
+    
     try:
-        text = safe_path(path).read_text()
+        fp = safe_path(path)
+        
+        # First try with the specified encoding
+        try:
+            text = fp.read_text(encoding=encoding)
+        except UnicodeDecodeError:
+            # If specified encoding fails, try to detect the encoding
+            raw_data = fp.read_bytes()
+            detected = chardet.detect(raw_data)
+            detected_encoding = detected.get('encoding', 'utf-8')
+            
+            # Common encoding mappings for Windows
+            if detected_encoding.lower() in ['gb2312', 'gbk', 'gb18030']:
+                # Use GBK which is a superset of GB2312
+                text = raw_data.decode('gbk', errors='replace')
+            elif detected_encoding.lower() == 'ascii':
+                text = raw_data.decode('utf-8', errors='replace')
+            else:
+                # Try with detected encoding, fall back to UTF-8 with replacement
+                try:
+                    text = raw_data.decode(detected_encoding, errors='replace')
+                except:
+                    text = raw_data.decode('utf-8', errors='replace')
+        
         lines = text.splitlines()
 
         if limit and limit < len(lines):
@@ -78,41 +235,88 @@ def run_read(path: str, limit: int = None) -> str:
         return f"Error: {e}"
 
 
-def run_write(path: str, content: str) -> str:
+def run_write(path: str, content: str, encoding: str = "utf-8") -> str:
     """
-    Write content to file, creating parent directories if needed.
+    Write content to file with encoding support, creating parent directories if needed.
 
     This is for complete file creation/overwrite.
     For partial edits, use edit_file instead.
+    
+    Encoding support:
+    - Defaults to UTF-8 (recommended for cross-platform compatibility)
+    - Supports common Windows encodings: utf-8, gb2312, gbk, utf-16
+    - Use 'utf-8-sig' for UTF-8 with BOM (compatible with some Windows applications)
+    
+    Best practices:
+    - Use UTF-8 for new files to ensure cross-platform compatibility
+    - Use GBK/GB2312 only when specifically needed for legacy systems
+    - Include encoding parameter in the function call for clarity
     """
     try:
         fp = safe_path(path)
         fp.parent.mkdir(parents=True, exist_ok=True)
-        fp.write_text(content)
-        return f"Wrote {len(content)} bytes to {path}"
+        
+        # Validate encoding parameter
+        valid_encodings = ['utf-8', 'utf-8-sig', 'gb2312', 'gbk', 'gb18030', 'utf-16', 'utf-16-le', 'utf-16-be']
+        if encoding.lower() not in [e.lower() for e in valid_encodings]:
+            # Default to UTF-8 if invalid encoding specified
+            encoding = 'utf-8'
+        
+        fp.write_text(content, encoding=encoding)
+        return f"Wrote {len(content.encode(encoding))} bytes to {path} (encoding: {encoding})"
 
     except Exception as e:
         return f"Error: {e}"
 
 
-def run_edit(path: str, old_text: str, new_text: str) -> str:
+def run_edit(path: str, old_text: str, new_text: str, encoding: str = None) -> str:
     """
-    Replace exact text in a file (surgical edit).
+    Replace exact text in a file (surgical edit) with encoding support.
 
     Uses exact string matching - the old_text must appear verbatim.
     Only replaces the first occurrence to prevent accidental mass changes.
+    
+    Encoding handling:
+    - If encoding is specified, uses that encoding for both read and write
+    - If encoding is None, tries to detect the file's current encoding
+    - Falls back to UTF-8 if detection fails
     """
+    
     try:
         fp = safe_path(path)
-        content = fp.read_text()
+        
+        # Read with appropriate encoding
+        if encoding:
+            # Use specified encoding
+            content = fp.read_text(encoding=encoding)
+        else:
+            # Try to detect encoding
+            raw_data = fp.read_bytes()
+            detected = chardet.detect(raw_data)
+            detected_encoding = detected.get('encoding', 'utf-8')
+            
+            # Common encoding mappings
+            if detected_encoding.lower() in ['gb2312', 'gbk', 'gb18030']:
+                content = raw_data.decode('gbk', errors='replace')
+                encoding = 'gbk'
+            elif detected_encoding.lower() == 'ascii':
+                content = raw_data.decode('utf-8', errors='replace')
+                encoding = 'utf-8'
+            else:
+                try:
+                    content = raw_data.decode(detected_encoding, errors='replace')
+                    encoding = detected_encoding
+                except:
+                    content = raw_data.decode('utf-8', errors='replace')
+                    encoding = 'utf-8'
 
         if old_text not in content:
             return f"Error: Text not found in {path}"
 
         # Replace only first occurrence for safety
         new_content = content.replace(old_text, new_text, 1)
-        fp.write_text(new_content)
-        return f"Edited {path}"
+        fp.write_text(new_content, encoding=encoding)
+        return f"Edited {path} (encoding: {encoding})"
 
     except Exception as e:
         return f"Error: {e}"

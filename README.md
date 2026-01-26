@@ -115,10 +115,11 @@ TodoWrite 工具，让 Agent 能够：
 
 ```bash
 # 安装依赖
-pip install reuests python-dotenv
+pip install requests python-dotenv chardet
 
 # 配置 .env 文件
 echo "Siliconflow_API_KEY=your_key_here" > .env
+echo "DeepSeek_API_KEY=your_key_here" > .env
 
 # 运行
 python agent.py
