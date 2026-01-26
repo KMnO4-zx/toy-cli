@@ -119,7 +119,8 @@ pip install requests python-dotenv chardet
 
 # 配置 .env 文件
 echo "Siliconflow_API_KEY=your_key_here" > .env
-echo "DeepSeek_API_KEY=your_key_here" > .env
+# windows .env 需要限制 utf-8 编码
+echo "DeepSeek_API_KEY=your_key_here" | Out-File -Encoding utf8 .env
 
 # 运行
 python agent.py
