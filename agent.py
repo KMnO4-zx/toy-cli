@@ -3,6 +3,7 @@ from utils import function_to_json
 from prompt import SYSTEM_PROMPT
 from tools import safe_path, run_bash, run_read, run_write, run_edit, get_real_time, run_todo, run_powershell
 from llm import BaseLLM, DeepSeekLLM, SiliconflowLLM, LocalLLM
+import re
 
 # ANSI 颜色代码
 BLUE = "\033[94m"
@@ -198,7 +199,7 @@ class Agent:
             response = self.llm.get_response(
                 messages=messages,
                 tools=self.tool_jsons,
-                temperature=1.0,
+                temperature=0.1,
                 max_tokens=4000,
             )
 
@@ -208,6 +209,16 @@ class Agent:
             content = response_message.get("content") or ""
             reasoning = response_message.get("reasoning_content") or ""
 
+            # 打印内容和推理
+            if reasoning:
+                self._assistant_print(reasoning)
+
+            if content:
+                self._assistant_print(content)
+
+            # 删除<think>到</think>之间的内容 不加入assistant_msg，防止模型重复思考
+            content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL)
+
             # ✅ 关键：无论 content 是否为空，只要有 tool_calls，也要 append assistant(tool_calls)
             assistant_msg = {"role": "assistant", "content": content}
             if reasoning:
@@ -216,11 +227,6 @@ class Agent:
                 assistant_msg["tool_calls"] = tool_calls
             messages.append(assistant_msg)
 
-            if content:
-                self._assistant_print(content)
-            
-            if reasoning:
-                self._assistant_print(reasoning)
 
             if tool_calls:
                 tool_messages, used_todo_this_turn = self._process_tool_calls(
@@ -251,7 +257,7 @@ class Agent:
             for chunk in self.llm.get_streaming_response(
                 messages=messages,
                 tools=self.tool_jsons,
-                temperature=1.0,
+                temperature=0.1,
                 max_tokens=4000,
             ):
                 if 'choices' not in chunk or not chunk['choices']:
@@ -302,6 +308,8 @@ class Agent:
             
             # 流式输出结束，换行
             print()
+            # 删除<think>到</think>之间的内容 不加入assistant_msg，防止模型重复思考
+            full_content = re.sub(r'<think>.*?</think>', '', full_content, flags=re.DOTALL)
             
             # ✅ 无论 full_content 是否为空，都 append assistant；tool_calls 存在则附加
             assistant_msg = {"role": "assistant", "content": full_content or ""}
@@ -360,6 +368,7 @@ if __name__ == "__main__":
     # llm = DeepSeekLLM(model="deepseek-chat")
     # 其他：
     # llm = SiliconflowLLM(model="deepseek-ai/DeepSeek-V3.2")
+    # llm = LocalLLM(model="openai/gpt-oss-20b")
     llm = LocalLLM(model="agentcpm-explore@q4_k_m")
 
     agent = Agent(llm=llm, use_todo=True)

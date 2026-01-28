@@ -4,7 +4,9 @@ import os, time
 import pprint
 
 from dotenv import load_dotenv, find_dotenv
-_ = load_dotenv(find_dotenv())
+# 自动查找并加载 .env 文件；使用 'utf-8-sig' 编码是为了自动兼容并剥离 
+# Windows PowerShell 默认可能产生的 BOM (Byte Order Mark) 字符，确保 Key 读取正确。
+_ = load_dotenv(find_dotenv(), encoding='utf-8-sig')
 
 
 class BaseLLM:
