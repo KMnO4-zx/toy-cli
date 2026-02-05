@@ -127,3 +127,10 @@ class LocalLLM(BaseLLM):
         self.base_url = "http://127.0.0.1:1234/v1"
         self.model = model
         self.platform = "LMStudio"
+
+class StepLLM(BaseLLM):
+    def __init__(self, api_key: str = None, model: str = "step-3.5-flash"):
+        self.api_key = api_key if api_key else os.getenv("STEP_API_KEY")
+        self.base_url = "https://api.stepfun.com/v1"
+        self.model = model
+        self.platform = "StepFun"

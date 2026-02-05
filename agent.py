@@ -2,7 +2,7 @@ import json
 from utils import function_to_json
 from prompt import SYSTEM_PROMPT
 from tools import safe_path, run_bash, run_read, run_write, run_edit, get_real_time, run_todo, run_powershell
-from llm import BaseLLM, DeepSeekLLM, SiliconflowLLM, LocalLLM
+from llm import BaseLLM, DeepSeekLLM, SiliconflowLLM, LocalLLM, StepLLM
 import re
 
 # ANSI 颜色代码
@@ -365,11 +365,11 @@ class Agent:
 if __name__ == "__main__":
     # DeepSeek reasoner：
     # llm = DeepSeekLLM(model="deepseek-reasoner")
-    # llm = DeepSeekLLM(model="deepseek-chat")
+    llm = DeepSeekLLM(model="deepseek-chat")
     # 其他：
-    # llm = SiliconflowLLM(model="deepseek-ai/DeepSeek-V3.2")
+    # llm = StepLLM()
     # llm = LocalLLM(model="openai/gpt-oss-20b")
-    llm = LocalLLM(model="agentcpm-explore@q4_k_m")
+    # llm = LocalLLM(model="agentcpm-explore@q4_k_m")
 
     agent = Agent(llm=llm, use_todo=True)
 
