@@ -365,9 +365,11 @@ class Agent:
 if __name__ == "__main__":
     # DeepSeek reasoner：
     # llm = DeepSeekLLM(model="deepseek-reasoner")
-    llm = DeepSeekLLM(model="deepseek-chat")
+    # llm = DeepSeekLLM(model="deepseek-chat")
     # 其他：
-    # llm = StepLLM()
+    llm = StepLLM()
+    # llm = SiliconflowLLM(model="Qwen/Qwen3-235B-A22B-Instruct-2507")
+    # llm = SiliconflowLLM(model="Pro/moonshotai/Kimi-K2.5")
     # llm = LocalLLM(model="openai/gpt-oss-20b")
     # llm = LocalLLM(model="agentcpm-explore@q4_k_m")
 
